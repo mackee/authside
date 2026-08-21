@@ -1,0 +1,105 @@
+# goreleaser builds the release binaries, archives and checksums, and
+# creates the GitHub Release. The container image is NOT built here -- the
+# release workflow builds it with buildx from the repository's own
+# Dockerfile, so that Dockerfile stays the single description of the image
+# (see .github/workflows/release.yml).
+version: 2
+
+project_name: authside
+
+# No before-hooks. `go mod tidy` here would mutate the tree mid-release and
+# goreleaser then refuses to build from a dirty one -- so the hook turns an
+# untidy module into a failed release instead of a caught mistake. CI
+# checks tidiness on every push (.github/workflows/ci.yml), which is where
+# that belongs; a release should not be rewriting the source it releases.
+
+builds:
+  - id: authside
+    main: ./cmd/authside
+    binary: authside
+    env:
+      - CGO_ENABLED=0
+    # -X main.version is what makes `authside --version` report the tag.
+    # cmd/authside/version.go falls back to the module version Go records
+    # for `go install ...@vX.Y.Z`, so a binary from either route is
+    # identifiable -- but only this path gets the tag exactly.
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    flags:
+      - -trimpath
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # No Windows ARM64: authside is a development sidecar, and nothing
+      # has asked for it. Add it when something does.
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: authside
+    ids:
+      - authside
+    # Keep the tool's own name first in the archive name so a directory of
+    # downloads sorts usefully.
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  # Local git history, not the GitHub API (`use: github`). The API variant
+  # needs the compare endpoint and a previous release to compare against,
+  # which the very first tag of a repository does not have -- and it is the
+  # one part of this file a local `--snapshot` cannot exercise, since
+  # snapshots skip the changelog entirely. The release job checks out with
+  # fetch-depth: 0 precisely so the log is all here.
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      # Release-mechanics commits are noise in release notes: the diff is
+      # the record for those.
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+release:
+  # The warning belongs on every release page, not only in the README: a
+  # release page is where someone who has never read the README arrives.
+  header: |
+    > **⚠️ Never run `authside` in production, or on any host reachable from the
+    > internet.** It authenticates nobody: it issues whatever token its config says to
+    > issue, for whoever asks. Anything that trusts it is unauthenticated, however real
+    > the tokens look. It binds to loopback unless you pass `--allow-external`.
+
+    `authside` is a fake identity provider for local development and test
+    environments. See the [README](https://github.com/mackee/authside#readme) for
+    what it does and why.
+  footer: |
+    ## Container image
+
+    ```console
+    $ docker pull ghcr.io/mackee/authside:{{ .Tag }}
+    ```
+
+    ## Install the binary
+
+    ```console
+    $ go install github.com/mackee/authside/cmd/authside@{{ .Tag }}
+    ```

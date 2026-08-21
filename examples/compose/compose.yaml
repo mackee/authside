@@ -1,0 +1,39 @@
+# Runnable example: `authside` as a docker compose sidecar, plus a minimal
+# demo relying party that drives a real OIDC login flow against it.
+#
+# authside is a FAKE identity provider for local development and test
+# environments ONLY -- see the repo README's warning block. Never point
+# this compose file, or anything like it, at a production network.
+#
+# Run from this directory:
+#   docker compose up --build
+# then open http://localhost:8080/login in a browser.
+#
+# See ./README.md for the /etc/hosts caveat this setup depends on.
+services:
+  authside:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    # A container has to bind outside loopback to be reachable from `app`;
+    # that is opt-in by design (cmd/authside/main.go's --allow-external
+    # safety gate), so it is passed here explicitly rather than baked into
+    # the image's default CMD.
+    command: ["--config", "/etc/authside/authside.yaml", "--allow-external"]
+    volumes:
+      - ./authside.yaml:/etc/authside/authside.yaml:ro
+    ports:
+      - "5556:5556"
+
+  app:
+    build:
+      context: ../..
+      dockerfile: examples/compose/app/Dockerfile
+    environment:
+      OIDC_ISSUER: http://authside:5556/oidc
+      OIDC_CLIENT_ID: local-app
+      OIDC_CLIENT_SECRET: local-secret
+    ports:
+      - "8080:8080"
+    depends_on:
+      - authside

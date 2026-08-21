@@ -1,0 +1,21 @@
+# Keep the build context small and avoid leaking local/working state into
+# the image build.
+
+.git/
+.github/
+
+# Local build artifacts / binaries.
+/authside
+*.test
+tmp/
+dist/
+
+# Editor/OS cruft.
+.DS_Store
+*.swp
+
+# NOTE: examples/ is intentionally NOT excluded here, even though building
+# the authside binary itself doesn't need it: examples/compose/app's own
+# Dockerfile builds from this same repo-root context (it is package main
+# inside this module, sharing go.mod/go.sum) and needs examples/compose/app
+# present in the build context.

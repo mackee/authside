@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# Supersede a still-running job when the same ref is pushed again. `push`
+# is intentionally left unfiltered so a branch gets CI before it has a PR;
+# the cost is that a branch with an open PR runs twice (push + pull_request).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Read the toolchain version from go.mod itself so this workflow
+          # never drifts from (or hardcodes ahead of/behind) the module's
+          # declared "go 1.26.0" directive.
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          # "gofmt -l" alone exits 0 even when it lists unformatted files;
+          # only a non-empty file list means something needs formatting, so
+          # fail explicitly when it prints anything.
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # A module that is not tidy fails the release before it starts:
+      # goreleaser runs `go mod tidy` in its own before-hook and then
+      # refuses to build from a dirty tree. Catching it on every push is
+      # cheaper than discovering it while cutting a tag.
+      - name: go mod tidy is a no-op
+        run: |
+          go mod tidy
+          if ! git diff --quiet go.mod go.sum; then
+            echo "go.mod/go.sum are not tidy; run 'go mod tidy' and commit the result:"
+            git --no-pager diff go.mod go.sum
+            exit 1
+          fi
+
+      - name: go test
+        run: go test -race ./...
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: docker build
+        run: docker build .

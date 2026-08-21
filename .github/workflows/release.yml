@@ -1,0 +1,133 @@
+name: Release
+
+# Tags only. Nothing here runs on a branch push: a floating image tag built
+# from an unreviewed HEAD would put `docker pull` one step away from code
+# nobody has looked at, and this tool is a fake identity provider -- the
+# fewer ways to acquire an unexamined one, the better.
+on:
+  push:
+    tags:
+      - "v*"
+
+# Deliberately NOT sharing ci.yml's concurrency group, and deliberately
+# cancel-in-progress: false. A half-cancelled release -- archives uploaded,
+# image never pushed, or the reverse -- is worse than a slow one.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # The gate. This repeats ci.yml's checks rather than calling it as a
+  # reusable workflow on purpose: ci.yml also triggers on this very tag
+  # push, and it cancels in-progress runs of the same ref, so a shared
+  # concurrency group could cancel the release's own verification. A few
+  # duplicated lines buy independence from that.
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race ./...
+
+  binaries:
+    name: Binaries and GitHub Release
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      # goreleaser creates the Release and uploads the archives.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # goreleaser builds the changelog from commit history, which a
+          # shallow clone does not have.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          # Pin the major so this matches the version the config was
+          # validated against locally (goreleaser check / --snapshot).
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  image:
+    name: Container image
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Pushing to ghcr.io needs this; nothing else here does.
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # linux/arm64 is built under emulation. It is the slow part of this
+      # job, and it is not optional: authside's first-line audience runs
+      # Apple Silicon, where an amd64-only image works but crawls.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # v1.2.3 (the tag verbatim, which is what the release notes tell
+          # people to pull), plus bare 1.2.3 and 1.2 for anyone who writes
+          # them without the v. `latest=auto` moves latest only for a real
+          # release, never for a -rc/-beta prerelease.
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          flavor: |
+            latest=auto
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # metadata-action's labels carry the version/revision/created
+          # annotations; the Dockerfile's own LABELs (title, description,
+          # the never-run-in-production warning) survive alongside them.
+          labels: ${{ steps.meta.outputs.labels }}
+          # Without this the binary inside a v1.2.3 image reports "dev" --
+          # the arg feeds -X main.version, see the Dockerfile.
+          build-args: |
+            AUTHSIDE_VERSION=${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,28 @@
+# NOTE: draft format -- subject to change.
+#
+# This is the README "Quick start > As a docker compose sidecar" config,
+# copied verbatim (config/readme_test.go loads this exact document as
+# TestQuickStartYAML, so it is known to parse and behave as documented).
+listen: 0.0.0.0:5556       # container-local loopback would be unreachable from `app`
+
+targets:
+  - name: oidc             # mounted at /oidc
+    type: oidc
+    issuer: http://authside:5556/oidc
+    login: picker          # auto | picker | form
+    clients:
+      - client_id: local-app
+        client_secret: local-secret
+        redirect_uris:
+          - http://localhost:8080/auth/callback
+    users:
+      - sub: user-1
+        claims:
+          email: alice@example.com
+          email_verified: true
+          name: Alice
+          hd: example.com
+      - sub: user-2
+        claims:
+          email: bob@example.net
+          name: Bob
