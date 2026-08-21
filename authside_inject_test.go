@@ -307,6 +307,65 @@ func TestInject_ReplacesAConfiguredUserWholesale(t *testing.T) {
 	}
 }
 
+// TestInject_RefreshDoesNotFallBackToTheConfiguredUser is the silent half
+// of the refresh regression. When the injected sub happens to name a
+// configured user, re-deriving the claims at refresh time does not fail --
+// it succeeds, with the wrong claims, behind a 200. Only comparing the
+// refreshed token against the injected values catches it.
+func TestInject_RefreshDoesNotFallBackToTheConfiguredUser(t *testing.T) {
+	baseURL := startInjected(t, func(baseURL string) *authside.Config {
+		return injectedConfig(baseURL, "", []config.User{
+			{Sub: "user-1", Claims: map[string]any{"email": "configured@example.com"}},
+		})
+	})
+	issuer := baseURL + injMount
+	ctx := context.Background()
+
+	jar := newJar(t)
+	setAuthsideClaimsCookie(t, jar, baseURL, map[string]any{"sub": "user-1", "email": "injected@example.com"})
+
+	code, _ := driveAuthorize(t, noFollowClient(jar), issuer, injClientID, injRedirectURI, "state-refresh-fallback", "nonce-refresh-fallback")
+	if code == "" {
+		t.Fatalf("authorize returned no code")
+	}
+	oauth2Config := &oauth2.Config{
+		ClientID:     injClientID,
+		ClientSecret: injClientSecret,
+		RedirectURL:  injRedirectURI,
+		Endpoint:     oauth2.Endpoint{AuthURL: issuer + "/authorize", TokenURL: issuer + "/token"},
+	}
+	tok, err := oauth2Config.Exchange(ctx, code)
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if tok.RefreshToken == "" {
+		t.Fatalf("no refresh token issued")
+	}
+
+	refreshed, err := oauth2Config.TokenSource(ctx, &oauth2.Token{RefreshToken: tok.RefreshToken}).Token()
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	raw, ok := refreshed.Extra("id_token").(string)
+	if !ok || raw == "" {
+		t.Fatalf("no id_token in the refresh response")
+	}
+	keySet := oidc.NewRemoteKeySet(ctx, issuer+"/jwks")
+	idToken, err := oidc.NewVerifier(issuer, keySet, &oidc.Config{ClientID: injClientID}).Verify(ctx, raw)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	var claims struct {
+		Email string `json:"email"`
+	}
+	if err := idToken.Claims(&claims); err != nil {
+		t.Fatalf("Claims: %v", err)
+	}
+	if claims.Email != "injected@example.com" {
+		t.Fatalf("refreshed email = %q, want the injected value; the refresh fell back to the configured user", claims.Email)
+	}
+}
+
 // TestInject_IgnoredWithoutOptIn: every target in one process shares one
 // origin, so a cookie set for target A rides along to target B. B ignores
 // it rather than failing, which is what keeps enabling the feature
