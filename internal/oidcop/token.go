@@ -227,7 +227,7 @@ func issueFromCode(ctx tanukirpc.Context[*Target], t *Target, clientID string, r
 		reqlog.FieldsFromContext(ctx).SetPKCE(ac.codeChallengeMethod)
 	}
 
-	user, ok := t.lookupUser(ac.subject)
+	resolvedClaims, ok, err := t.claimsFor(ac.loginIdentity, clientID)
 	if !ok {
 		// Unreachable in practice: /authorize already validated the
 		// subject before minting this code. Fail closed rather than
@@ -235,7 +235,6 @@ func issueFromCode(ctx tanukirpc.Context[*Target], t *Target, clientID string, r
 		// should not exist.
 		return nil, httpx.ServerError(fmt.Sprintf("token: subject %q from a previously-issued code is no longer valid on target %q", ac.subject, t.name))
 	}
-	resolvedClaims, err := user.resolveClaims(clientID)
 	if err != nil {
 		return nil, httpx.ServerError(fmt.Sprintf("token: resolving claims: %v", err))
 	}
@@ -295,7 +294,7 @@ func issueFromCode(ctx tanukirpc.Context[*Target], t *Target, clientID string, r
 	// rotation, reuse detection, revocation -- all need a refresh token to
 	// exist with no extra ceremony on the client's authorize request. The
 	// simpler behaviour is deliberate.
-	refreshToken, familyID, err := t.refreshTokens.issue(clientID, ac.subject, ac.scope)
+	refreshToken, familyID, err := t.refreshTokens.issue(clientID, ac.loginIdentity, ac.scope)
 	if err != nil {
 		return nil, httpx.ServerError(fmt.Sprintf("token: issuing refresh token: %v", err))
 	}
@@ -340,13 +339,16 @@ func issueFromRefresh(ctx tanukirpc.Context[*Target], t *Target, clientID string
 		return nil, err
 	}
 
-	user, ok := t.lookupUser(result.subject)
+	// The claims come from the refresh family, not from a fresh lookup of
+	// the subject: an identity injected at /authorize exists nowhere in
+	// the config, so re-deriving it here would silently refresh into a
+	// different (empty) claim set. See loginIdentity.
+	resolvedClaims, ok, err := t.claimsFor(result.loginIdentity, clientID)
 	if !ok {
 		// Unreachable in practice, same reasoning as issueFromCode: fail
 		// closed rather than issue a claims-less token.
 		return nil, httpx.ServerError(fmt.Sprintf("token: subject %q from a refresh token is no longer valid on target %q", result.subject, t.name))
 	}
-	resolvedClaims, err := user.resolveClaims(clientID)
 	if err != nil {
 		return nil, httpx.ServerError(fmt.Sprintf("token: resolving claims: %v", err))
 	}

@@ -445,3 +445,37 @@ targets:
 		t.Fatalf("Listen = %q", cfg.Listen)
 	}
 }
+
+// TestInjectedClaimsYAML loads the README "Identities the config never
+// listed" target verbatim, including its empty users: block -- the shape
+// the section exists to make legal.
+func TestInjectedClaimsYAML(t *testing.T) {
+	const doc = `
+targets:
+  - name: oidc
+    type: oidc
+    issuer: http://authside:5556/oidc
+    login: auto                    # accept_injected_claims is a login: auto input
+    accept_injected_claims: true   # off by default
+    clients:
+      - client_id: local-app
+        client_secret: local-secret
+        redirect_uris:
+          - http://localhost:8080/auth/callback
+    users: []                      # a target can have none at all
+`
+	cfg, err := LoadBytes([]byte(doc))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	tgt := cfg.Targets[0]
+	if !tgt.AcceptInjectedClaims {
+		t.Fatalf("accept_injected_claims did not parse as true")
+	}
+	if tgt.Login != LoginAuto {
+		t.Fatalf("login = %q, want auto", tgt.Login)
+	}
+	if len(tgt.Users) != 0 {
+		t.Fatalf("users = %v, want none", tgt.Users)
+	}
+}

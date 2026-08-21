@@ -16,9 +16,16 @@ import (
 // being retired (rotate) or by its family being revoked (reuse detection,
 // or an explicit POST /revocation), never by clock.Now() alone.
 type refreshRecord struct {
+	// loginIdentity is the subject this token was issued to and, for a
+	// login injected via authside_claims, the claims that came with it.
+	// A refresh re-mints tokens from what is stored here, so an injected
+	// identity must be stored here or the refreshed tokens would silently
+	// carry a different (config-derived, possibly empty) claim set than
+	// the ones the original code exchange produced.
+	loginIdentity
+
 	familyID string
 	clientID string
-	subject  string
 	scope    string
 	retired  bool
 }
@@ -35,8 +42,9 @@ type refreshRecord struct {
 // that shares its familyID and every access token ever tracked here --
 // see revokeFamilyLocked.
 type refreshFamily struct {
+	loginIdentity
+
 	clientID     string
-	subject      string
 	revoked      bool
 	accessTokens map[string]struct{}
 }
@@ -71,7 +79,7 @@ func newRefreshStore(mode config.RefreshTokenMode) *refreshStore {
 
 // issue mints a brand-new family and its first refresh token, for the
 // authorization_code grant (token.go's issueFromCode).
-func (s *refreshStore) issue(clientID, subject, scope string) (token, familyID string, err error) {
+func (s *refreshStore) issue(clientID string, id loginIdentity, scope string) (token, familyID string, err error) {
 	token, err = randomToken(32)
 	if err != nil {
 		return "", "", err
@@ -84,15 +92,15 @@ func (s *refreshStore) issue(clientID, subject, scope string) (token, familyID s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.families[familyID] = &refreshFamily{
-		clientID:     clientID,
-		subject:      subject,
-		accessTokens: make(map[string]struct{}),
+		loginIdentity: id,
+		clientID:      clientID,
+		accessTokens:  make(map[string]struct{}),
 	}
 	s.tokens[token] = &refreshRecord{
-		familyID: familyID,
-		clientID: clientID,
-		subject:  subject,
-		scope:    scope,
+		loginIdentity: id,
+		familyID:      familyID,
+		clientID:      clientID,
+		scope:         scope,
 	}
 	return token, familyID, nil
 }
@@ -127,9 +135,10 @@ func (s *refreshStore) trackAccessToken(familyID, accessToken string, sessions *
 // tokens it is about to mint should carry, plus which refresh token
 // string the client should actually receive (nextToken).
 type refreshResult struct {
+	loginIdentity
+
 	familyID  string
 	clientID  string
-	subject   string
 	scope     string
 	nextToken string
 }
@@ -175,10 +184,10 @@ func (s *refreshStore) refresh(sessions *sessionStore, token, clientID string) (
 	}
 
 	result := refreshResult{
-		familyID: rec.familyID,
-		clientID: rec.clientID,
-		subject:  rec.subject,
-		scope:    rec.scope,
+		loginIdentity: rec.loginIdentity,
+		familyID:      rec.familyID,
+		clientID:      rec.clientID,
+		scope:         rec.scope,
 	}
 
 	if s.mode == config.RefreshStatic {
@@ -199,10 +208,10 @@ func (s *refreshStore) refresh(sessions *sessionStore, token, clientID string) (
 		return refreshResult{}, err
 	}
 	s.tokens[newToken] = &refreshRecord{
-		familyID: rec.familyID,
-		clientID: rec.clientID,
-		subject:  rec.subject,
-		scope:    rec.scope,
+		loginIdentity: rec.loginIdentity,
+		familyID:      rec.familyID,
+		clientID:      rec.clientID,
+		scope:         rec.scope,
 	}
 	result.nextToken = newToken
 	return result, nil

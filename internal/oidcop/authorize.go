@@ -88,19 +88,14 @@ func authorizeHandler(t *Target) tanukirpc.Handler[*Target] {
 		case config.LoginForm:
 			return newFormPage(t, req.hidden(), "", ""), nil
 		default: // config.LoginAuto
-			subject, subjErr := subjectForAuto(ctx.Request(), t)
-			if subjErr != nil {
-				return nil, redirectError(req.RedirectURI, req.State, subjErr)
-			}
-			user, ok := t.lookupUser(subject)
-			if !ok {
-				return nil, redirectError(req.RedirectURI, req.State,
-					httpx.AccessDenied(fmt.Sprintf("subject %q is not a configured user on target %q; set accept_any_username: true to allow unconfigured subjects", subject, t.name)))
+			id, idErr := identityForAuto(ctx.Request(), t)
+			if idErr != nil {
+				return nil, redirectError(req.RedirectURI, req.State, idErr)
 			}
 			return nil, completeLogin(ctx, t, loginParams{
+				loginIdentity:       id,
 				clientID:            req.ClientID,
 				redirectURI:         req.RedirectURI,
-				subject:             user.sub,
 				scope:               req.Scope,
 				state:               req.State,
 				nonce:               req.Nonce,
@@ -137,6 +132,41 @@ func redirectURIRegistered(registered []string, uri string) bool {
 		}
 	}
 	return false
+}
+
+// identityForAuto resolves who login: auto redirects as, in precedence
+// order: the authside_claims cookie (a complete identity, sub and claims
+// together, on a target with accept_injected_claims), then the
+// authside_sub cookie, then the target's default_user.
+//
+// Injection wins over authside_sub because it is the more specific of
+// the two: a payload names a subject as well as its claims, so honouring
+// authside_sub first would mint the injected claims against a different
+// sub. A test that sets both meant the payload.
+func identityForAuto(req *http.Request, t *Target) (loginIdentity, *httpx.OIDCError) {
+	injected, ok, oerr := injectedIdentityFrom(req, t)
+	if oerr != nil {
+		return loginIdentity{}, oerr
+	}
+	if ok {
+		// No lookupUser here, deliberately: an injected identity is not
+		// looked up at all. It replaces the configured user wholesale,
+		// including when its sub happens to name one -- see
+		// injectedIdentity.
+		return injected.login(), nil
+	}
+
+	subject, subjErr := subjectForAuto(req, t)
+	if subjErr != nil {
+		return loginIdentity{}, subjErr
+	}
+	user, found := t.lookupUser(subject)
+	if !found {
+		return loginIdentity{}, httpx.AccessDenied(fmt.Sprintf(
+			"subject %q is not a configured user on target %q; set accept_any_username: true to allow unconfigured subjects, or accept_injected_claims: true to supply the identity in the %s cookie",
+			subject, t.name, authsideClaimsCookie))
+	}
+	return loginIdentity{subject: user.sub}, nil
 }
 
 // subjectForAuto resolves the subject login: auto redirects as: the
@@ -192,9 +222,14 @@ func successRedirect(redirectURI, code, state string) (string, error) {
 // just decided who is logging in (auto's cookie/default_user, picker's
 // click, or form's submission).
 type loginParams struct {
+	// loginIdentity is the subject and, for an injected login, the
+	// claims that go with it. Embedded so every construction site that
+	// only knows a subject keeps reading as one (p.subject), while the
+	// claims ride along to the authorization code untouched.
+	loginIdentity
+
 	clientID            string
 	redirectURI         string
-	subject             string
 	scope               string
 	state               string
 	nonce               string
@@ -226,9 +261,9 @@ type loginParams struct {
 // should keep being reported as such.
 func completeLogin(ctx tanukirpc.Context[*Target], t *Target, p loginParams) error {
 	code, err := t.codes.issue(t.clock.Now(), authCode{
+		loginIdentity:       p.loginIdentity,
 		clientID:            p.clientID,
 		redirectURI:         p.redirectURI,
-		subject:             p.subject,
 		scope:               p.scope,
 		nonce:               p.nonce,
 		codeChallenge:       p.codeChallenge,

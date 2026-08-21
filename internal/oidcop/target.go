@@ -35,6 +35,16 @@ type Target struct {
 	defaultUser       string
 	acceptAnyUsername bool
 
+	// acceptInjectedClaims lets login: auto take the whole identity from
+	// the authside_claims cookie (see inject.go). ignoredInjectionOnce
+	// makes the "cookie present but this target did not opt in" notice
+	// fire once for the life of the target rather than on every request
+	// -- one authside process serves every target from one origin, so a
+	// cookie meant for another target rides along to this one and the
+	// notice would otherwise be per-request noise.
+	acceptInjectedClaims bool
+	ignoredInjectionOnce sync.Once
+
 	clients map[string]config.Client
 	users   map[string]preparedUser
 
@@ -222,21 +232,23 @@ func buildTarget(t *config.Target, logger *slog.Logger, opts ...Option) (*Target
 		discovery:         t.Discovery,
 		defaultUser:       t.DefaultUser,
 		acceptAnyUsername: t.AcceptAnyUsername,
-		clients:           clients,
-		users:             users,
-		userOrder:         userOrder,
-		errors:            t.Errors,
-		idTokenTTL:        stdDuration(t.IDTokenTTL),
-		accessTokenTTL:    stdDuration(t.AccessTokenTTL),
-		nbfSkew:           stdDuration(t.NBFSkew),
-		accessToken:       t.AccessToken,
-		tamper:            newTamperSet(t.Tamper),
-		keys:              keySet,
-		clock:             o.clock,
-		logger:            logger,
-		codes:             newCodeStore(),
-		sessions:          newSessionStore(),
-		refreshTokens:     newRefreshStore(t.RefreshToken),
+
+		acceptInjectedClaims: t.AcceptInjectedClaims,
+		clients:              clients,
+		users:                users,
+		userOrder:            userOrder,
+		errors:               t.Errors,
+		idTokenTTL:           stdDuration(t.IDTokenTTL),
+		accessTokenTTL:       stdDuration(t.AccessTokenTTL),
+		nbfSkew:              stdDuration(t.NBFSkew),
+		accessToken:          t.AccessToken,
+		tamper:               newTamperSet(t.Tamper),
+		keys:                 keySet,
+		clock:                o.clock,
+		logger:               logger,
+		codes:                newCodeStore(),
+		sessions:             newSessionStore(),
+		refreshTokens:        newRefreshStore(t.RefreshToken),
 	}
 
 	if t.Discovery == config.DiscoverPerIssuer {
@@ -281,6 +293,19 @@ func (t *Target) lookupUser(subject string) (preparedUser, bool) {
 		return preparedUser{sub: subject, raw: map[string]any{}, claims: map[string]claimTemplate{}}, true
 	}
 	return preparedUser{}, false
+}
+
+// warnIgnoredInjection reports, once per target, that a request carried
+// an authside_claims cookie this target is not configured to read. It is
+// a warning rather than an error for the reason injectedIdentityFrom
+// documents (one shared origin across every target), and once rather
+// than per-request so that a cookie set for a sibling target does not
+// bury the log.
+func (t *Target) warnIgnoredInjection() {
+	t.ignoredInjectionOnce.Do(func() {
+		t.logger.Warn("ignoring "+authsideClaimsCookie+" cookie: this target does not have accept_injected_claims set",
+			slog.String("target", t.name))
+	})
 }
 
 // orderedUsers returns every configured user, in the order they appear in

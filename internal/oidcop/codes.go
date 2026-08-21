@@ -18,9 +18,14 @@ const codeTTL = 5 * time.Minute
 // success: who is logging in, for which client, under which redirect_uri,
 // with which PKCE challenge (if any) and nonce.
 type authCode struct {
+	// loginIdentity is the subject and, when the login was injected via
+	// authside_claims, its claims. Keeping the claims on the code is
+	// what makes an injected identity survive the /authorize -> /token
+	// hop: /token has no request-scoped cookie to re-read.
+	loginIdentity
+
 	clientID            string
 	redirectURI         string
-	subject             string
 	scope               string
 	nonce               string
 	codeChallenge       string

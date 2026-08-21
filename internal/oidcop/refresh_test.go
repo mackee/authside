@@ -11,7 +11,7 @@ func TestRefreshStore_RotateRetiresOldTokenAndIssuesNew(t *testing.T) {
 	s := newRefreshStore(config.RefreshRotate)
 	sessions := newSessionStore()
 
-	tokenA, familyID, err := s.issue("client-1", "user-1", "openid")
+	tokenA, familyID, err := s.issue("client-1", loginIdentity{subject: "user-1"}, "openid")
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestRefreshStore_ReuseDetectionRevokesWholeFamily(t *testing.T) {
 	s := newRefreshStore(config.RefreshRotate)
 	sessions := newSessionStore()
 
-	tokenA, familyID, err := s.issue("client-1", "user-1", "openid")
+	tokenA, familyID, err := s.issue("client-1", loginIdentity{subject: "user-1"}, "openid")
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestRefreshStore_StaticModeDoesNotRotateOrTripReuseDetection(t *testing.T) 
 	s := newRefreshStore(config.RefreshStatic)
 	sessions := newSessionStore()
 
-	token, _, err := s.issue("client-1", "user-1", "openid")
+	token, _, err := s.issue("client-1", loginIdentity{subject: "user-1"}, "openid")
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestRefreshStore_WrongClientRejected(t *testing.T) {
 	s := newRefreshStore(config.RefreshRotate)
 	sessions := newSessionStore()
 
-	token, _, err := s.issue("client-1", "user-1", "openid")
+	token, _, err := s.issue("client-1", loginIdentity{subject: "user-1"}, "openid")
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestRefreshStore_ConcurrentReplaySameToken(t *testing.T) {
 	s := newRefreshStore(config.RefreshRotate)
 	sessions := newSessionStore()
 
-	token, familyID, err := s.issue("client-1", "user-1", "openid")
+	token, familyID, err := s.issue("client-1", loginIdentity{subject: "user-1"}, "openid")
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}

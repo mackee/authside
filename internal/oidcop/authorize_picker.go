@@ -170,9 +170,9 @@ func pickerSubmitHandler(t *Target) tanukirpc.Handler[*Target] {
 		}
 
 		return nil, completeLogin(ctx, t, loginParams{
+			loginIdentity:       loginIdentity{subject: user.sub},
 			clientID:            req.ClientID,
 			redirectURI:         req.RedirectURI,
-			subject:             user.sub,
 			scope:               req.Scope,
 			state:               req.State,
 			nonce:               req.Nonce,

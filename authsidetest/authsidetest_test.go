@@ -23,6 +23,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
+	"github.com/mackee/authside"
 	"github.com/mackee/authside/authsidetest"
 )
 
@@ -433,5 +434,65 @@ func TestRevocation_ATestCanEndASessionWithoutTheApplication(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid_grant") {
 		t.Fatalf("refresh error = %q, want it to mention invalid_grant", err.Error())
+	}
+}
+
+// ClientAsIdentity is the in-process counterpart of the authside_claims
+// cookie: an identity the config never listed, driven through the same
+// login: auto flow ClientAs uses.
+func TestClientAsIdentity(t *testing.T) {
+	op := authsidetest.NewOIDC(t,
+		authsidetest.WithConfig(func(cfg *authside.Config) {
+			cfg.Targets[0].AcceptInjectedClaims = true
+		}),
+	)
+
+	client := op.ClientAsIdentity(map[string]any{
+		"sub":   "invented-user",
+		"email": "invented@example.com",
+	})
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+
+	u, err := url.Parse(op.Issuer() + "/authorize")
+	if err != nil {
+		t.Fatalf("parsing authorize URL: %v", err)
+	}
+	q := u.Query()
+	q.Set("response_type", "code")
+	q.Set("client_id", op.ClientID())
+	q.Set("redirect_uri", op.RedirectURI())
+	q.Set("scope", "openid")
+	q.Set("state", "s-1")
+	u.RawQuery = q.Encode()
+
+	resp, err := client.Get(u.String())
+	if err != nil {
+		t.Fatalf("GET /authorize: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("/authorize status = %d, want 302", resp.StatusCode)
+	}
+	loc, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil {
+		t.Fatalf("parsing Location: %v", err)
+	}
+	if loc.Query().Get("code") == "" {
+		t.Fatalf("no code in %q", loc)
+	}
+
+	// The request log records the invented subject, which is the cheap
+	// proof that the cookie -- not default_user -- decided this login.
+	log := op.RequestLog()
+	var found bool
+	for _, line := range log {
+		if strings.Contains(line, `"sub":"invented-user"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no request logged for the injected subject; log = %v", log)
 	}
 }

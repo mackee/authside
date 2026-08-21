@@ -1,6 +1,8 @@
 package authsidetest
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -152,8 +154,8 @@ func WithStartTime(t time.Time) Option {
 // already been applied to it, so fn can see and override their combined
 // result. It exists for the parts of config.Target this package has no
 // dedicated Option for — Discovery, AccessToken, RefreshToken, Errors,
-// Tamper, NBFSkew, AcceptAnyUsername and so on — not as a replacement for
-// the Options above.
+// Tamper, NBFSkew, AcceptAnyUsername, AcceptInjectedClaims and so on —
+// not as a replacement for the Options above.
 //
 // Multiple WithConfig calls run in the order given, each seeing the
 // previous one's edits.
@@ -408,6 +410,53 @@ func (o *OIDC) ClientAs(sub string) *http.Client {
 		return nil
 	}
 	jar.SetCookies(origin, []*http.Cookie{{Name: "authside_sub", Value: sub, Path: "/"}})
+
+	return &http.Client{Jar: jar}
+}
+
+// ClientAsIdentity returns an *http.Client whose cookie jar carries an
+// authside_claims cookie holding identity, on this server's own origin.
+// Where ClientAs names a subject the config already lists, this supplies
+// the whole identity — identity["sub"] is the subject and every other key
+// is a claim — so a test can log in as someone the config never mentioned,
+// with the claims the application under test actually reads.
+//
+// identity must carry a non-empty string "sub"; anything else is a test
+// bug and fails the test here rather than at /authorize.
+//
+// The target must have AcceptInjectedClaims set (there is no dedicated
+// Option — use WithConfig) and be running login: auto, which is NewOIDC's
+// default. Everything ClientAs documents about redirect following applies
+// here unchanged.
+func (o *OIDC) ClientAsIdentity(identity map[string]any) *http.Client {
+	o.tb.Helper()
+
+	sub, _ := identity["sub"].(string)
+	if sub == "" {
+		o.tb.Fatalf("authsidetest: ClientAsIdentity: identity needs a non-empty string %q, got %#v", "sub", identity["sub"])
+		return nil
+	}
+	payload, err := json.Marshal(identity)
+	if err != nil {
+		o.tb.Fatalf("authsidetest: ClientAsIdentity: marshalling identity: %v", err)
+		return nil
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		o.tb.Fatalf("authsidetest: ClientAsIdentity: cookiejar.New: %v", err)
+		return nil
+	}
+	origin, err := url.Parse(o.URL())
+	if err != nil {
+		o.tb.Fatalf("authsidetest: ClientAsIdentity: parsing %q: %v", o.URL(), err)
+		return nil
+	}
+	jar.SetCookies(origin, []*http.Cookie{{
+		Name:  "authside_claims",
+		Value: base64.RawURLEncoding.EncodeToString(payload),
+		Path:  "/",
+	}})
 
 	return &http.Client{Jar: jar}
 }

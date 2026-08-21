@@ -215,8 +215,18 @@ func Validate(cfg *Config) error {
 				subs[u.Sub] = true
 			}
 		}
-		if len(t.Users) == 0 && !t.AcceptAnyUsername {
-			errs = append(errs, fmt.Errorf("%s: users must not be empty unless accept_any_username is true — with no configured users and accept_any_username false, nobody could ever log in on this target", label))
+		if len(t.Users) == 0 && !t.AcceptAnyUsername && !t.AcceptInjectedClaims {
+			errs = append(errs, fmt.Errorf("%s: users must not be empty unless accept_any_username or accept_injected_claims is true — with no configured users and neither of those set, nobody could ever log in on this target", label))
+		}
+
+		// accept_injected_claims is a login: auto input (the
+		// authside_claims cookie, read where login: auto reads
+		// authside_sub). picker and form decide who logs in from a click
+		// or a submitted username instead, so the cookie would have
+		// nothing to override there — silently ignoring it would leave a
+		// target that looks configured for injection and is not.
+		if t.AcceptInjectedClaims && t.Login != LoginAuto {
+			errs = append(errs, fmt.Errorf("%s: accept_injected_claims requires login: auto (this target uses login: %s); the authside_claims cookie is login: auto's input, and picker/form take the subject from a click or a submitted username instead", label, t.Login))
 		}
 
 		if t.DefaultUser != "" && !subs[t.DefaultUser] {
@@ -232,9 +242,13 @@ func Validate(cfg *Config) error {
 		// this way will 4xx at /authorize for anyone who forgot to set
 		// the cookie. Hence: warning, not error.
 		if t.Login == LoginAuto && t.DefaultUser == "" {
+			cookies := "the authside_sub cookie"
+			if t.AcceptInjectedClaims {
+				cookies = "the authside_claims or authside_sub cookie"
+			}
 			cfg.Warnings = append(cfg.Warnings, fmt.Sprintf(
-				"target %q: login: auto has no default_user; /authorize will only work if the caller sets the authside_sub cookie itself (README: auto has no implicit fallback subject)",
-				t.Name))
+				"target %q: login: auto has no default_user; /authorize will only work if the caller sets %s itself (README: auto has no implicit fallback subject)",
+				t.Name, cookies))
 		}
 	}
 

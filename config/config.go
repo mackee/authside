@@ -93,6 +93,18 @@ type Target struct {
 	// username not present in Users, using it directly as sub.
 	AcceptAnyUsername bool `yaml:"accept_any_username"`
 
+	// AcceptInjectedClaims lets LoginAuto take the whole identity --
+	// sub and every claim -- from the authside_claims cookie on the
+	// request, instead of from Users. Off by default; LoginAuto only.
+	//
+	// This is the one input that lets a test invent an identity it could
+	// not have listed in the config ahead of time (a per-run unique
+	// email, a claim derived from it). It does not make the server
+	// mutable: the payload is read from the request that carries it and
+	// travels with that login's authorization code and refresh family,
+	// exactly like the subject the authside_sub cookie names.
+	AcceptInjectedClaims bool `yaml:"accept_injected_claims"`
+
 	// AccessToken selects the access token format. Defaults to
 	// AccessTokenJWT.
 	AccessToken AccessTokenType `yaml:"access_token"`

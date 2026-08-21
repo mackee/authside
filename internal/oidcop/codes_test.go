@@ -9,7 +9,7 @@ func TestCodeStore_SingleUse(t *testing.T) {
 	s := newCodeStore()
 	now := time.Now()
 
-	code, err := s.issue(now, authCode{clientID: "client-1", redirectURI: "https://app.example/cb", subject: "user-1"})
+	code, err := s.issue(now, authCode{loginIdentity: loginIdentity{subject: "user-1"}, clientID: "client-1", redirectURI: "https://app.example/cb"})
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestCodeStore_NotConsumedOnFailedCheck(t *testing.T) {
 	s := newCodeStore()
 	now := time.Now()
 
-	code, err := s.issue(now, authCode{clientID: "client-1", redirectURI: "https://app.example/cb", subject: "user-1"})
+	code, err := s.issue(now, authCode{loginIdentity: loginIdentity{subject: "user-1"}, clientID: "client-1", redirectURI: "https://app.example/cb"})
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestCodeStore_Expiry(t *testing.T) {
 	s := newCodeStore()
 	issuedAt := time.Now()
 
-	code, err := s.issue(issuedAt, authCode{clientID: "client-1", redirectURI: "https://app.example/cb", subject: "user-1"})
+	code, err := s.issue(issuedAt, authCode{loginIdentity: loginIdentity{subject: "user-1"}, clientID: "client-1", redirectURI: "https://app.example/cb"})
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}

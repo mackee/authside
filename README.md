@@ -628,7 +628,7 @@ application, which is discussed in
 
 | Mode | `/authorize` behaviour | Use for |
 |---|---|---|
-| `auto` | Redirects immediately, as the user named by the `authside_sub` cookie or by `default_user` | Headless E2E, smoke tests |
+| `auto` | Redirects immediately, as the user named by the `authside_claims` or `authside_sub` cookie, or by `default_user` | Headless E2E, smoke tests |
 | `picker` | One-click list of configured users | Manual development, multi-user E2E |
 | `form` | Username/password form | Exercising the login UX and failure paths |
 
@@ -641,6 +641,72 @@ before the flow starts (Playwright's `context.addCookies`, or the cookie jar of 
 `http.Client` a Go test drives the flow with). Either way the choice lives in the test,
 visible in its source and in its trace, instead of in a queue inside the server — and two
 tests running at once cannot take each other's turn.
+
+### Identities the config never listed
+
+`accept_any_username` lets a test invent a `sub`, but that user arrives with no claims —
+which is enough for "some user is logged in" and not enough when the application reads
+`email`, or a claim derived from it. A suite that generates identities per run (a unique
+address per test so parallel workers cannot collide over the same account's data) has
+nothing to put in `users:` in the first place.
+
+`accept_injected_claims` lets one login carry its whole identity. Set the
+`authside_claims` cookie on `authside`'s own origin before the flow starts; its value is
+the base64url of a flat JSON object whose `sub` is the subject and whose every other key
+is a claim:
+
+```yaml
+targets:
+  - name: oidc
+    type: oidc
+    issuer: http://authside:5556/oidc
+    login: auto                    # accept_injected_claims is a login: auto input
+    accept_injected_claims: true   # off by default
+    clients:
+      - client_id: local-app
+        client_secret: local-secret
+        redirect_uris:
+          - http://localhost:8080/auth/callback
+    users: []                      # a target can have none at all
+```
+
+```js
+// Playwright: the identity is a property of the browser context, like a logged-in session
+await context.addCookies([{
+  name: 'authside_claims',
+  value: Buffer.from(JSON.stringify({
+    sub: `e2e-${runId}-sub`,
+    email: `e2e-${runId}@example.com`,
+    hd: 'example.com',
+  })).toString('base64url'),
+  url: 'https://authside.example.test',   // authside's own browser-facing origin
+}]);
+```
+
+The rules, all of them:
+
+- **The payload is the identity, not a patch on one.** A `sub` that happens to name a
+  configured user does not merge with it; what the payload says is what the token carries.
+- **It wins over `authside_sub` and `default_user`**, since it names a subject as well as
+  its claims.
+- **Values are literals.** A `${...}` in an injected value is that text, not a template.
+  The target's `issuer` template still resolves *against* these claims, so
+  `issuer: .../${claims.tid}/v2.0` picks up an injected `tid` — one target, a tenant per
+  login, none of them configured. (`discovery: per_issuer` still enumerates only the
+  configured users; an injected tenant has no discovery document of its own, which is what
+  a real per-tenant provider does anyway — see [Per-tenant issuers](#per-tenant-issuers).)
+- **A malformed payload fails the authorization**, with `error=invalid_request`, rather
+  than quietly falling back to `default_user` and logging the test in as someone else.
+- **A cookie on a target without `accept_injected_claims` is ignored** (with one log line
+  per target). Every target in one process shares one origin, so a cookie set for one
+  rides along to all of them.
+- **`/end_session` clears it**, alongside `authside_sub`.
+
+This does not make the server mutable. The payload is read from the request carrying it
+and travels with that login's authorization code and refresh family — so a refreshed token
+carries the same claims as the original — and nothing about the next request changes.
+Two identities at once means two browser contexts, which is what isolates their cookie
+jars from each other regardless.
 
 ### Keys
 
@@ -708,6 +774,7 @@ which costs nothing, because targets are independent by construction.
 | A deliberately broken token | `tamper: [at_hash]` — see [Negative testing](#negative-testing) |
 | An unknown `kid` | `tamper: [signature]` |
 | A user the config does not list | `login: form` with `accept_any_username: true` |
+| A user with claims the config does not list | `login: auto` with `accept_injected_claims: true` and the `authside_claims` cookie |
 
 Targets that differ in one setting do not have to be written out twice — YAML anchors are
 enough, and no scenario-inheritance syntax of `authside`'s own is involved:
@@ -898,7 +965,9 @@ IdP at least once before you ship.
 - [x] Multiple targets, and multiple issuers, in one process
 - [x] Templated per-tenant issuers, with all three discovery modes (`shared`, `off` and
       `per_issuer`)
-- [x] Login modes (`auto`, `picker`, `form`)
+- [x] Login modes (`auto`, `picker`, `form`), including identities supplied per login by
+      the caller — `accept_injected_claims`, for suites that generate their users at run
+      time; see [Identities the config never listed](#identities-the-config-never-listed)
 - [x] JWT and opaque access tokens, `at_hash`
 - [x] A stable signing key on request — `key_file` / `key_pem`, so a token minted in one
       process verifies in another. There is deliberately no `key_seed`; see [Keys](#keys)

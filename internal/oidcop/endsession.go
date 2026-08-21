@@ -24,9 +24,10 @@ type endSessionRequest struct {
 
 // endSessionHandler implements GET /end_session (RP-initiated logout).
 //
-// Every call clears the authside_sub cookie on authside's own origin
-// (README "Login modes": that cookie is login: auto's only subject
-// source), so a subsequent auto/picker login starts fresh regardless of
+// Every call clears the authside_sub and authside_claims cookies on
+// authside's own origin (README "Login modes": between them those are
+// login: auto's only identity sources), so a subsequent login starts
+// fresh regardless of
 // whether a redirect follows -- this is the one behaviour a logout test
 // actually needs, and it happens unconditionally, before anything about
 // post_logout_redirect_uri is even looked at.
@@ -54,7 +55,7 @@ func endSessionHandler(t *Target) tanukirpc.Handler[*Target] {
 			return nil, err
 		}
 
-		clearAuthsideSubCookie(ctx.Response())
+		clearLoginCookies(ctx.Response())
 
 		clientID := req.ClientID
 		if clientID == "" {
@@ -94,20 +95,28 @@ func endSessionRedirect(postLogoutRedirectURI, state string) (string, error) {
 	return u.String(), nil
 }
 
-// clearAuthsideSubCookie deletes the authside_sub cookie (RFC 6265's
-// convention: same name, Max-Age -1, in the past) at Path "/", so it is
+// clearLoginCookies deletes both cookies a caller can use to say who
+// logs in -- authside_sub and authside_claims -- using RFC 6265's
+// convention (same name, Max-Age -1, in the past) at Path "/", so each is
 // removed regardless of which path under this target's mount it was
 // originally set at. A caller (browser test automation, or a Go test's
-// http.Client cookie jar) that itself set authside_sub at Path "/" -- the
-// common case; Playwright's context.addCookies defaults to it -- sees it
-// gone after this response.
-func clearAuthsideSubCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name:   authsideSubCookie,
-		Value:  "",
-		Path:   "/",
-		MaxAge: -1,
-	})
+// http.Client cookie jar) that itself set them at Path "/" -- the common
+// case; Playwright's context.addCookies defaults to it -- sees them gone
+// after this response.
+//
+// authside_claims is cleared even on a target without
+// accept_injected_claims: the cookie is set on authside's origin, shared
+// by every target in the process, so a logout that left it behind would
+// carry one target's injected identity into the next login on another.
+func clearLoginCookies(w http.ResponseWriter) {
+	for _, name := range []string{authsideSubCookie, authsideClaimsCookie} {
+		http.SetCookie(w, &http.Cookie{
+			Name:   name,
+			Value:  "",
+			Path:   "/",
+			MaxAge: -1,
+		})
+	}
 }
 
 // clientIDFromIDTokenHint best-effort extracts the `aud` claim from an
