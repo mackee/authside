@@ -96,12 +96,6 @@ $ go install github.com/mackee/authside/cmd/authside@latest
 amd64/arm64 plus windows/amd64, and the image is multi-arch (`linux/amd64`,
 `linux/arm64`).
 
-> [!NOTE]
-> No release has been tagged yet, so the image and the archives do not exist on the
-> registry or the Releases page until one is. `docker build -t authside .` and
-> `go build ./cmd/authside` work from a checkout in the meantime, which is what the
-> examples below do.
-
 ## Quick start
 
 ### As a docker compose sidecar
