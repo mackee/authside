@@ -453,6 +453,72 @@ func TestInject_EndSessionClearsTheCookie(t *testing.T) {
 	}
 }
 
+// TestInject_RevocationEndsAnInjectedSession: revocation keys on token
+// strings, not on subjects, so it has no reason to care where an identity
+// came from -- but refreshFamily now carries that identity, so this pins
+// that the family-wide kill still reaches an injected login's tokens.
+func TestInject_RevocationEndsAnInjectedSession(t *testing.T) {
+	baseURL := startInjected(t, func(baseURL string) *authside.Config {
+		return injectedConfig(baseURL, "", nil)
+	})
+	issuer := baseURL + injMount
+	ctx := context.Background()
+
+	jar := newJar(t)
+	setAuthsideClaimsCookie(t, jar, baseURL, map[string]any{"sub": "u-revoke", "email": "u-revoke@example.com"})
+
+	code, _ := driveAuthorize(t, noFollowClient(jar), issuer, injClientID, injRedirectURI, "state-revoke", "nonce-revoke")
+	if code == "" {
+		t.Fatalf("authorize returned no code")
+	}
+	oauth2Config := &oauth2.Config{
+		ClientID:     injClientID,
+		ClientSecret: injClientSecret,
+		RedirectURL:  injRedirectURI,
+		Endpoint:     oauth2.Endpoint{AuthURL: issuer + "/authorize", TokenURL: issuer + "/token"},
+	}
+	tok, err := oauth2Config.Exchange(ctx, code)
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+
+	userinfoStatus := func() int {
+		req, err := http.NewRequest(http.MethodGet, issuer+"/userinfo", nil)
+		if err != nil {
+			t.Fatalf("building /userinfo request: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET /userinfo: %v", err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := userinfoStatus(); got != http.StatusOK {
+		t.Fatalf("/userinfo before revocation = %d, want 200", got)
+	}
+
+	// Revoking the refresh token kills the whole family, access token
+	// included -- the "end a session from outside the application" lever.
+	resp, err := http.PostForm(issuer+"/revocation", url.Values{
+		"token":         {tok.RefreshToken},
+		"client_id":     {injClientID},
+		"client_secret": {injClientSecret},
+	})
+	if err != nil {
+		t.Fatalf("POST /revocation: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /revocation status = %d, want 200", resp.StatusCode)
+	}
+
+	if got := userinfoStatus(); got != http.StatusUnauthorized {
+		t.Fatalf("/userinfo after revocation = %d, want 401", got)
+	}
+}
+
 // --- helpers -------------------------------------------------------
 
 // authorizeLocation drives GET /authorize and returns the Location it

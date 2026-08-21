@@ -1,10 +1,16 @@
 package oidcop
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/mackee/authside/config"
 )
 
 func encodePayload(t *testing.T, v any) string {
@@ -106,5 +112,40 @@ func TestDecodeInjectedIdentity_Rejects(t *testing.T) {
 				t.Fatalf("error = %q, want substring %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// The ignore-without-opt-in path says so once per target, not per
+// request: every target in one process shares one origin, so a cookie
+// set for a sibling target reaches this one on every single request.
+func TestWarnIgnoredInjection_OncePerTarget(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	target, err := buildTarget(&config.Target{
+		Name:   "oidc",
+		Type:   "oidc",
+		Issuer: "http://authside.invalid/oidc",
+		Mount:  "/oidc",
+		Login:  config.LoginAuto,
+		Users:  []config.User{{Sub: "user-1"}},
+		// accept_injected_claims deliberately not set.
+	}, logger)
+	if err != nil {
+		t.Fatalf("buildTarget: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://authside.invalid/oidc/authorize", nil)
+	req.AddCookie(&http.Cookie{Name: authsideClaimsCookie, Value: "anything"})
+
+	for range 3 {
+		_, ok, oerr := injectedIdentityFrom(req, target)
+		if ok || oerr != nil {
+			t.Fatalf("injectedIdentityFrom() = (_, %v, %v), want the cookie ignored", ok, oerr)
+		}
+	}
+
+	if got := strings.Count(buf.String(), authsideClaimsCookie); got != 1 {
+		t.Fatalf("warned %d times across 3 requests, want exactly 1; log = %s", got, buf.String())
 	}
 }

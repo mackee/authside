@@ -761,9 +761,16 @@ whole job is to be unverifiable.
 
 ## Scenarios are configuration
 
-`authside` has no runtime API. Everything a test might want to vary is a value in the
-config file, and the way to have two behaviours available at once is to run two targets —
-which costs nothing, because targets are independent by construction.
+`authside` has no runtime API. Every *behaviour* a test might want to vary is a value in
+the config file, and the way to have two behaviours available at once is to run two targets
+— which costs nothing, because targets are independent by construction.
+
+*Who logs in* is the one thing that has always come from the request instead: a click in
+`picker`, a submitted username in `form`, the `authside_sub` cookie under `auto`, and — on
+a target that opts in — a whole identity in the `authside_claims` cookie (see
+[Identities the config never listed](#identities-the-config-never-listed)). None of those
+mutate the server: they are read from the request carrying them, so there is still nothing
+to reset between tests and nothing for two parallel tests to race over.
 
 | Scenario | Configuration |
 |---|---|

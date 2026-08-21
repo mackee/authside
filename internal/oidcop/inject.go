@@ -17,13 +17,18 @@ import (
 // authside never sets it (only clears it, at /end_session, alongside
 // authside_sub).
 //
-// Why a cookie rather than a query parameter on /authorize: in the flow
-// this exists for, the application under test builds the /authorize URL
-// itself and redirects the browser to it, so the test never holds that
-// URL to add a parameter to. A cookie is set once on authside's origin
-// before the flow starts and rides the redirect. It is also the same
-// mechanism authside_sub already uses, rather than a second kind of
-// input to learn.
+// Why a cookie rather than a query parameter on /authorize: the
+// application under test builds that URL and redirects the browser to
+// it, so putting a parameter on it means the test has to get hold of the
+// redirect first -- either intercepting it (browser-level request
+// interception is not reliable across a cross-origin redirect chain: one
+// real suite measured its interception handler never firing at all for
+// this redirect shape) or capturing the Location itself and navigating a
+// rebuilt URL. A cookie needs none of that apparatus: set it once on
+// authside's origin before the flow starts and it rides the redirect,
+// including the naive case where the test just clicks "log in". It is
+// also the mechanism authside_sub already uses, rather than a second
+// kind of input to learn.
 //
 // Cookies are scoped to a browser context, not to a request, so two
 // logins as different identities in one context are sequential (set,

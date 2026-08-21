@@ -301,6 +301,9 @@ func (t *Target) lookupUser(subject string) (preparedUser, bool) {
 // documents (one shared origin across every target), and once rather
 // than per-request so that a cookie set for a sibling target does not
 // bury the log.
+//
+// It goes through the target's own logger, so authside.WithLogger
+// redirects or silences it like every other line this package writes.
 func (t *Target) warnIgnoredInjection() {
 	t.ignoredInjectionOnce.Do(func() {
 		t.logger.Warn("ignoring "+authsideClaimsCookie+" cookie: this target does not have accept_injected_claims set",
