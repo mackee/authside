@@ -83,8 +83,10 @@ func TestProbe_ReachableNon2xx(t *testing.T) {
 // TestProbe_SelfSignedTLSIsReachable pins the InsecureSkipVerify
 // decision: the probe measures reachability, not trust, so a dev ingress
 // with a self-signed certificate must come back reachable. If this ever
-// starts warning, the runtime image would also need a CA bundle it does
-// not ship (see Dockerfile).
+// starts warning, every dev ingress fronted by a local CA turns into a
+// spurious warning -- which is the failure this decision avoids, and not
+// something a CA bundle would fix (the runtime image ships one anyway; see
+// Dockerfile).
 func TestProbe_SelfSignedTLSIsReachable(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -33,15 +33,22 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
     ./cmd/authside
 
 # ---- runtime stage ----------------------------------------------------------
-# distroless/static has no shell, no package manager, and (relevantly) no CA
-# certificate bundle. That's still a fit now that --probe exists: authside
-# otherwise only accepts inbound requests, and the probe's one outbound GET
-# does not verify certificates by design (it asks whether something answers
-# at advertise.internal, sends nothing and trusts nothing -- see
-# cmd/authside/probe.go), so it needs no roots to trust. Anything added later
-# that makes a *verified* outbound HTTPS call does need them: switch this
-# base to gcr.io/distroless/base-debian12:nonroot, or add a CA bundle
-# explicitly, at that point.
+# distroless/static has no shell, no package manager and no libc -- which is
+# the whole reason CGO_ENABLED=0 above matters. It does ship
+# /etc/ssl/certs/ca-certificates.crt, /etc/passwd and tzdata, so a *verified*
+# outbound HTTPS call from this image works without changing the base
+# (measured: a Go binary doing an https.Get with the default TLS config
+# succeeds here and fails on scratch with "certificate signed by unknown
+# authority"). An earlier version of this comment claimed the opposite and
+# told the next person to move to gcr.io/distroless/base-debian12:nonroot for
+# that; there is no need, and it would cost 29MB (measured: base:nonroot is
+# 31.4MB against static:nonroot's 2.1MB). base adds glibc and libssl, not
+# roots.
+#
+# So the CA story constrains nothing here. --probe's outbound GET skips
+# certificate verification for a reason of its own, not for want of roots:
+# it asks whether something answers at advertise.internal, and a dev ingress
+# with a local-CA certificate is the normal case -- see cmd/authside/probe.go.
 #
 # The "nonroot" variant/tag ships a pre-created, unprivileged "nonroot"
 # user (uid/gid 65532) and already runs as that user by default; USER below

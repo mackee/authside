@@ -68,9 +68,11 @@ const probeTimeout = 3 * time.Second
 // the body). Verifying the certificate would make it answer a different
 // and less useful question -- a dev ingress with a local-CA or
 // self-signed certificate is the normal case here, and rejecting it
-// would turn a reachable base into a spurious warning. It also keeps the
-// runtime image on distroless/static, which ships no CA bundle at all
-// (see Dockerfile).
+// would turn a reachable base into a spurious warning.
+//
+// This is not a concession to the runtime image: distroless/static does
+// ship a CA bundle, so verifying would be possible here -- it is just the
+// wrong question to ask (see Dockerfile).
 //
 // Proxy is nil for the same reason: HTTP_PROXY in authside's environment
 // describes authside's egress, not the path the application would take,

@@ -20,10 +20,15 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" \
 
 # This demo app DOES make an outbound HTTPS-capable call (OIDC discovery
 # and token exchange against authside over the compose network, which is
-# plain HTTP here) -- unlike authside itself it is a client, so it keeps a
-# CA bundle via base-debian12 rather than the certless "static" variant,
-# in case anyone points OIDC_ISSUER at a real https:// endpoint instead.
-FROM gcr.io/distroless/base-debian12:nonroot
+# plain HTTP here), so pointing OIDC_ISSUER at a real https:// endpoint has
+# to keep working. That does not need base-debian12: the "static" variant
+# ships /etc/ssl/certs/ca-certificates.crt too -- what base adds is glibc
+# and libssl, neither of which a CGO_ENABLED=0 binary uses. This image was on
+# base for exactly that mistaken reason: dropping it takes it from 37.9MB to
+# 8.65MB, and it still completes verified HTTPS discovery -- checked by
+# running this image with OIDC_ISSUER=https://accounts.google.com, which
+# logs "discovered provider" and serves.
+FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/app /app
 
